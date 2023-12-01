@@ -1,9 +1,12 @@
 import pytorch_lightning as pl
 import pytorch_lightning.callbacks as callbacks
-from pytorch_lightning.loggers import TensorBoardLogger
 import torch
-from module import *
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
+
+from data import *
+from module import *
+from utils import *
 
 SEED = 42
 
@@ -20,7 +23,7 @@ def main():
     module = LitGCN(input_dim=data.num_features, hidden_dim=16, output_dim=1, pos_weight=10)
 
     trainer = pl.Trainer(
-        max_epochs=1000,
+        max_epochs=2000,
         devices=1,
         callbacks=[
             # callbacks.EarlyStopping(monitor="val_auc", patience=50, mode="max"),

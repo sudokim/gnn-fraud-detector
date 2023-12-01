@@ -2,6 +2,9 @@ import torch
 from sklearn.metrics import confusion_matrix
 
 
+__all__ = ["print_confusion_matrix"]
+
+
 def print_confusion_matrix(y_true, y_pred):
     assert isinstance(y_true, torch.Tensor), f"y_true should be a PyTorch tensor, got {type(y_true)}"
     assert isinstance(y_pred, torch.Tensor), f"y_pred should be a PyTorch tensor, got {type(y_pred)}"

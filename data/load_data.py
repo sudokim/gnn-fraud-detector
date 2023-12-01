@@ -8,6 +8,9 @@ from torch_geometric.data import Data
 from torch_geometric.transforms import NormalizeFeatures
 
 
+__all__ = ["load_data", "load_data_from_matlab"]
+
+
 def _post_process_data(data: Data, split_ratio: tuple[float], seed: int) -> Data:
     # Normalize node features
     data = NormalizeFeatures()(data)
