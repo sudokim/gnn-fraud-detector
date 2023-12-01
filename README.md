@@ -7,15 +7,14 @@ fraud
 │   ├── __init__.py
 │   └── load_data.py
 ├── dataset
-│   ├── amazon_instruments_all.npz
-│   ├── amazon_instruments_features.npy
-│   ├── amazon_instruments_labels.pkl
 │   └── Amazon.mat
 ├── module
-│   ├── __init__.py
-│   └── gcn.py
+│   ├── gcn.py
+│   └── __init__.py
 ├── utils
+│   ├── arg_parser.py
 │   ├── __init__.py
 │   └── metrics.py
-└── main.py
+├── main.py
+└── README.md
 ```
