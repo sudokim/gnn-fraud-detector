@@ -37,3 +37,19 @@ def parse_args():
     _validate_args(args)
 
     return args
+
+
+def parse_bert_args():
+    parser = ArgumentParser()
+
+    module = parser.add_argument_group("Module")
+    module.add_argument("--model_name", type=str, default="bert-base-cased", help="Type of the model to use")
+    module.add_argument("--module_weight_decay", type=float, default=5e-4, help="Weight decay of the module")
+    module.add_argument("--module_lr", type=float, default=0.01, help="Learning rate of the module")
+
+    trainer = parser.add_argument_group("Trainer")
+
+    trainer.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    trainer.add_argument("--seed", type=int, default=42, help="Seed for the trainer")
+
+    return parser.parse_args()
