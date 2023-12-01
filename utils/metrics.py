@@ -1,11 +1,20 @@
 import torch
 from sklearn.metrics import confusion_matrix
 
-
 __all__ = ["print_confusion_matrix"]
 
 
-def print_confusion_matrix(y_true, y_pred):
+def print_confusion_matrix(y_true, y_pred) -> tuple[float, float, float, float]:
+    """
+    Print the confusion matrix of the given predictions.
+
+    Args:
+        y_true (torch.Tensor): True labels.
+        y_pred (torch.Tensor): Predicted labels.
+
+    Returns:
+        tuple[float, float, float, float]: TP, FP, TN, FN
+    """
     assert isinstance(y_true, torch.Tensor), f"y_true should be a PyTorch tensor, got {type(y_true)}"
     assert isinstance(y_pred, torch.Tensor), f"y_pred should be a PyTorch tensor, got {type(y_pred)}"
 
@@ -25,4 +34,4 @@ def print_confusion_matrix(y_true, y_pred):
 
     print(output)
 
-    return output
+    return TP, FP, TN, FN

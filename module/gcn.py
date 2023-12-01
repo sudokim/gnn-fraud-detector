@@ -3,9 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import f1_score, recall_score, roc_auc_score
-from torch_geometric.nn import GCNConv
 from torch.nn.functional import dropout
-
+from torch_geometric.nn import GCNConv
 
 __all__ = ["LitGCN"]
 
@@ -47,12 +46,12 @@ class LitGCN(pl.LightningModule):
 
         # Define the GCN layers
         _modules = [GCNConv(input_dim, hidden_dim)]
-        for _ in range(num_layers - 1):
+        for _ in range(num_layers - 2):
             _modules.append(GCNConv(hidden_dim, hidden_dim))
         _modules.append(GCNConv(hidden_dim, output_dim))
         self.layers = nn.ModuleList(_modules)
 
-        assert isinstance(pos_weight, int), f"pos_weight should be an integer, got {type(pos_weight)}"
+        assert isinstance(pos_weight, float), f"pos_weight should be a float, got {type(pos_weight)}"
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
         self.save_hyperparameters()
 

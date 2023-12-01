@@ -1,4 +1,6 @@
-from argparse import ArgumentParser, Namespace
+import warnings
+from argparse import Namespace
+
 import pytorch_lightning as pl
 import pytorch_lightning.callbacks as callbacks
 import torch
@@ -7,37 +9,12 @@ from torch.utils.data import DataLoader
 
 from data import load_data_from_matlab
 from module import LitGCN
-from utils import print_confusion_matrix
-
-
-def parse_args():
-    parser = ArgumentParser()
-
-    data = parser.add_argument_group("Data")
-    data.add_argument(
-        "--dataset_mat_path", type=str, default="dataset/Amazon.mat", help="Path to the dataset in .mat format"
-    )
-    data.add_argument("--dataset_split_seed", type=int, default=42, help="Seed for splitting the dataset")
-
-    module = parser.add_argument_group("Module")
-    module.add_argument("--module_type", type=str, default="GCN", help="Type of the module to use")
-    module.add_argument("--module_weight_decay", type=float, default=5e-4, help="Weight decay of the module")
-    module.add_argument("--module_lr", type=float, default=0.01, help="Learning rate of the module")
-
-    module_gcn = module.add_argument_group("GCN")
-    module_gcn.add_argument("--gcn_hidden_dim", type=int, default=16, help="Hidden dimension of the GCN module")
-    module_gcn.add_argument("--gcn_dropout", type=float, default=0.5, help="Dropout rate of the GCN module")
-    module_gcn.add_argument("--gcn_num_layers", type=int, default=2, help="Number of layers of the GCN module")
-    module_gcn.add_argument("--gcn_pos_weight", type=float, default=10, help="Positive class weight of the GCN module")
-
-    trainer = parser.add_argument_group("Trainer")
-    trainer.add_argument("--trainer_max_epochs", type=int, default=2000, help="Maximum number of epochs to train")
-    trainer.add_argument("--seed", type=int, default=42, help="Seed for the trainer")
-
-    return parser.parse_args()
+from utils import parse_args, print_confusion_matrix
 
 
 def main(args: Namespace):
+    warnings.filterwarnings("ignore")
+
     torch.set_float32_matmul_precision("medium")
 
     data = load_data_from_matlab(args.dataset_mat_path, split_ratio=(0.8, 0.1, 0.1), seed=args.dataset_split_seed)
@@ -57,27 +34,35 @@ def main(args: Namespace):
         num_layers=args.gcn_num_layers,
     )
 
+    logger = TensorBoardLogger("logs", name="GCN-Fraud-Detection", default_hp_metric=False)
     trainer = pl.Trainer(
-        max_epochs=2000,
+        max_epochs=3000,
         devices=1,
         callbacks=[
             # callbacks.EarlyStopping(monitor="val_auc", patience=50, mode="max"),
             # callbacks.ModelCheckpoint(monitor="val_auc", mode="max"),
             callbacks.EarlyStopping(monitor="val_loss", patience=50, mode="min"),
             callbacks.ModelCheckpoint(monitor="val_loss", mode="min"),
+            callbacks.ModelSummary(max_depth=2),
         ],
-        logger=TensorBoardLogger("logs", name="GCN-Fraud-Detection"),
+        logger=logger,
         log_every_n_steps=1,
+        enable_model_summary=False,
+        enable_progress_bar=False,
     )
-    trainer.logger.log_hyperparams(args)
 
+    print("Training...")
     trainer.fit(module, train_dataloaders=dataloader, val_dataloaders=dataloader)
-    trainer.test(module, dataloaders=dataloader)
+    print(f"Trained {trainer.current_epoch + 1} epochs")
 
-    output: list = trainer.predict(module, dataloaders=dataloader)
+    test_metrics = trainer.test(module, dataloaders=dataloader)
+
+    # Save output and metrics
+    output: list[tuple[torch.Tensor, torch.Tensor]] = trainer.predict(module, dataloaders=dataloader)
 
     y = []
     pred = []
+
     for out in output:
         y.append(out[0])
         pred.append(out[1])
@@ -88,6 +73,9 @@ def main(args: Namespace):
     pred = torch.round(torch.sigmoid(pred))
     print_confusion_matrix(y, pred)
 
+    logger.log_hyperparams(params=args, metrics=test_metrics[0])
+    logger.save()
+
 
 if __name__ == "__main__":
-    main()
+    main(parse_args())
