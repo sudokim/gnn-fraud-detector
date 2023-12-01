@@ -1,3 +1,4 @@
+import pickle
 import warnings
 from argparse import Namespace
 
@@ -7,7 +8,7 @@ import torch
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
 
-from data import load_data_from_matlab
+from data import load_data, load_data_from_matlab
 from module import LitGCN
 from utils import parse_args, print_confusion_matrix
 
@@ -17,7 +18,13 @@ def main(args: Namespace):
 
     torch.set_float32_matmul_precision("medium")
 
-    data = load_data_from_matlab(args.dataset_mat_path, split_ratio=(0.8, 0.1, 0.1), seed=args.dataset_split_seed)
+    print("Loading data...")
+    data = load_data(
+        edge_index_path="dataset/amazon_instruments_user_all.npz",
+        features_path="dataset/amazon_instruments_features.npy",
+        labels_path="dataset/amazon_instruments_labels.pkl",
+        split_file="dataset/amazon_instruments_split_masks.pkl",
+    )
     data.validate()
     dataloader = DataLoader([data], shuffle=False, collate_fn=lambda x: x[0])
 

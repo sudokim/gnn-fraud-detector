@@ -12,10 +12,11 @@ def parse_args():
     parser = ArgumentParser()
 
     data = parser.add_argument_group("Data")
-    data.add_argument(
-        "--dataset_mat_path", type=str, default="dataset/Amazon.mat", help="Path to the dataset in .mat format"
+
+    data_bert = data.add_argument_group("BERT")
+    data_bert.add_argument(
+        "--bert_embedding_path", type=str, default="dataset/bert_embedding.pt", help="Path to the BERT embedding file"
     )
-    data.add_argument("--dataset_split_seed", type=int, default=42, help="Seed for splitting the dataset")
 
     module = parser.add_argument_group("Module")
     module.add_argument("--module_type", type=str, default="GCN", help="Type of the module to use")
@@ -26,7 +27,9 @@ def parse_args():
     module_gcn.add_argument("--gcn_hidden_dim", type=int, default=16, help="Hidden dimension of the GCN module")
     module_gcn.add_argument("--gcn_dropout", type=float, default=0.5, help="Dropout rate of the GCN module")
     module_gcn.add_argument("--gcn_num_layers", type=int, default=2, help="Number of layers of the GCN module")
-    module_gcn.add_argument("--gcn_pos_weight", type=float, default=10, help="Positive class weight of the GCN module")
+    module_gcn.add_argument(
+        "--gcn_pos_weight", type=float, default=10.0, help="Positive class weight of the GCN module"
+    )
 
     trainer = parser.add_argument_group("Trainer")
     trainer.add_argument("--trainer_max_epochs", type=int, default=2000, help="Maximum number of epochs to train")
