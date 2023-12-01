@@ -15,7 +15,17 @@ class LitGCN(pl.LightningModule):
     LightningModule for Graph Convolutional Network (GCN) with node classification.
     """
 
-    def __init__(self, input_dim, hidden_dim, output_dim, lr=0.01, weight_decay=5e-4, pos_weight: int = 10, dropout: float = 0.2):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim,
+        output_dim,
+        num_layers,
+        lr=0.01,
+        weight_decay=5e-4,
+        pos_weight: int = 10,
+        dropout: float = 0.2,
+    ):
         """
         Initializes a GCN model for node classification.
 
@@ -23,6 +33,7 @@ class LitGCN(pl.LightningModule):
             input_dim (int): Dimensionality of node features.
             hidden_dim (int): Dimensionality of hidden layers.
             output_dim (int): Number of output classes.
+            num_layers (int): Number of hidden layers (excluding the output layer
             lr (float): Learning rate (default: 0.01).
             weight_decay (float): Weight decay (default: 5e-4).
             pos_weight (int): Weight of positive class in the loss function.
@@ -35,19 +46,17 @@ class LitGCN(pl.LightningModule):
         self.dropout = dropout
 
         # Define the GCN layers
-        self.layers = nn.ModuleList(
-            [
-                GCNConv(input_dim, hidden_dim),
-                GCNConv(hidden_dim, hidden_dim),
-                GCNConv(hidden_dim, output_dim),
-            ]
-        )
+        _modules = [GCNConv(input_dim, hidden_dim)]
+        for _ in range(num_layers - 1):
+            _modules.append(GCNConv(hidden_dim, hidden_dim))
+        _modules.append(GCNConv(hidden_dim, output_dim))
+        self.layers = nn.ModuleList(_modules)
 
         assert isinstance(pos_weight, int), f"pos_weight should be an integer, got {type(pos_weight)}"
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
         self.save_hyperparameters()
 
-        self._is_binary_classification = (output_dim == 1)
+        self._is_binary_classification = output_dim == 1
 
     def forward(self, x, edge_index):
         """
@@ -86,7 +95,7 @@ class LitGCN(pl.LightningModule):
         y_masked = y[batch.train_mask]
         output_masked = output[batch.train_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
-        
+
         loss = self.loss_fn.forward(output_masked, y_masked)
 
         self.log("train_loss", loss)
@@ -107,13 +116,13 @@ class LitGCN(pl.LightningModule):
 
         output = self.forward(x, edge_index)
         output = output.squeeze(-1)
-        
+
         y_masked = y[batch.val_mask]
         output_masked = output[batch.val_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
 
         loss = self.loss_fn.forward(output_masked, y_masked)
-        
+
         self.log("val_loss", loss)
         self.log_metrics(output_masked, y_masked, prefix="val_")
         return loss
@@ -133,13 +142,13 @@ class LitGCN(pl.LightningModule):
 
         output = self.forward(x, edge_index)
         output = output.squeeze(-1)
-        
+
         y_masked = y[batch.test_mask]
         output_masked = output[batch.test_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
-        
+
         loss = self.loss_fn.forward(output_masked, y_masked)
-        
+
         self.log("test_loss", loss)
         self.log_metrics(output_masked, y_masked, prefix="test_")
         return loss
@@ -160,7 +169,7 @@ class LitGCN(pl.LightningModule):
 
         output = self.forward(x, edge_index)
         output = output.squeeze(-1)
-        
+
         y_masked = y[batch.test_mask]
         output_masked = output[batch.test_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
