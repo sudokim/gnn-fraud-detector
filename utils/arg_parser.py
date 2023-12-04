@@ -14,8 +14,12 @@ def parse_args():
     data = parser.add_argument_group("Data")
 
     data_bert = data.add_argument_group("BERT")
+    data_bert.add_argument("--bert", action="store_true", help="Whether to use BERT embedding")
     data_bert.add_argument(
         "--bert_embedding_path", type=str, default="dataset/bert_embedding.pt", help="Path to the BERT embedding file"
+    )
+    data_bert.add_argument(
+        "--bert_reduced_dim", type=int, default=64, help="Dimensionality of the reduced BERT embedding"
     )
 
     module = parser.add_argument_group("Module")

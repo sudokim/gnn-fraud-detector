@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from data import load_data, load_data_from_matlab
 from module import LitGCN
-from utils import parse_args, print_confusion_matrix
+from utils import get_bert_embedding, parse_args, print_confusion_matrix
 
 
 def main(args: Namespace):
@@ -28,6 +28,12 @@ def main(args: Namespace):
     data.validate()
     dataloader = DataLoader([data], shuffle=False, collate_fn=lambda x: x[0])
 
+    if args.bert:
+        user_text = pickle.load(open("dataset/amazon_instruments_user_text.pkl", "rb"))
+        bert_embedding = get_bert_embedding(user_text, args.bert_embedding_path)
+    else:
+        bert_embedding = None
+
     # Initialize and set up the model, optimizer, and data loader
     pl.seed_everything(args.seed)
     module = LitGCN(
@@ -39,9 +45,13 @@ def main(args: Namespace):
         pos_weight=args.gcn_pos_weight,
         dropout=args.gcn_dropout,
         num_layers=args.gcn_num_layers,
+        bert_embedding=bert_embedding,
+        bert_reduced_dim=args.bert_reduced_dim,
     )
 
-    logger = TensorBoardLogger("logs", name="GCN-Fraud-Detection", default_hp_metric=False)
+    logger = TensorBoardLogger(
+        "logs", name="GCN-Fraud-Detection" + "-BERT" if args.bert else "", default_hp_metric=False
+    )
     trainer = pl.Trainer(
         max_epochs=3000,
         devices=1,

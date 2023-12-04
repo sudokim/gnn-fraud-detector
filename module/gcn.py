@@ -24,6 +24,8 @@ class LitGCN(pl.LightningModule):
         weight_decay=5e-4,
         pos_weight: int = 10,
         dropout: float = 0.2,
+        bert_embedding: torch.Tensor | None = None,
+        bert_reduced_dim: int | None = None,
     ):
         """
         Initializes a GCN model for node classification.
@@ -37,12 +39,25 @@ class LitGCN(pl.LightningModule):
             weight_decay (float): Weight decay (default: 5e-4).
             pos_weight (int): Weight of positive class in the loss function.
             dropout (float): Dropout probability (default: 0.2).
+            bert_embedding (torch.Tensor): Pre-computed BERT embedding. If None, BERT embedding will not be used.
+            bert_reduced_dim (int): Dimensionality of the reduced BERT embedding.
         """
         super(LitGCN, self).__init__()
 
         self.lr = lr
         self.weight_decay = weight_decay
         self.dropout = dropout
+
+        if bert_embedding is None:
+            self.bert_embedding = None
+            self.bert_adapter = None
+            self.bert_layer_norm = None
+        else:
+            self.bert_embedding = nn.Embedding.from_pretrained(bert_embedding, freeze=True)
+            self.bert_adapter = nn.Linear(bert_embedding.shape[1], bert_reduced_dim)
+            self.bert_layer_norm = nn.LayerNorm(bert_reduced_dim)
+
+            input_dim += bert_reduced_dim
 
         # Define the GCN layers
         _modules = [GCNConv(input_dim, hidden_dim)]
@@ -53,7 +68,8 @@ class LitGCN(pl.LightningModule):
 
         assert isinstance(pos_weight, float), f"pos_weight should be a float, got {type(pos_weight)}"
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
-        self.save_hyperparameters()
+
+        self.save_hyperparameters(ignore="bert_embedding")
 
         self._is_binary_classification = output_dim == 1
 
@@ -68,6 +84,11 @@ class LitGCN(pl.LightningModule):
         Returns:
             torch.Tensor: Output logits.
         """
+        if self.bert_embedding is not None and self.bert_adapter is not None and self.bert_layer_norm is not None:
+            bert_embedding_forward = self.bert_adapter.forward(self.bert_embedding.weight)
+            bert_embedding_forward = self.bert_layer_norm.forward(bert_embedding_forward)
+            x = torch.cat([x, bert_embedding_forward], dim=1)
+
         for layer in self.layers[:-1]:
             x = layer(x, edge_index)
             x = torch.relu(x)
