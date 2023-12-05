@@ -158,13 +158,9 @@ class LitGCN(pl.LightningModule):
         output_masked = output[batch.train_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
 
-        loss_clf = self.loss_fn_clf.forward(output_masked, y_masked)
-        if self._autoencoder:
-            loss_ae = self.loss_fn_ae.forward(model_output.auto_dec, self.bert_embedding.weight)
-            loss = loss_clf + loss_ae
-        else:
-            loss_ae = None
-            loss = loss_clf
+        loss = self.loss_fn.forward(output_masked, y_masked)
+        self.log("train_loss", loss)
+        return loss
 
         self.log_dict(
             {

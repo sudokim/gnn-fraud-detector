@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -6,6 +8,8 @@ from sklearn.metrics import f1_score, recall_score, roc_auc_score
 from torch.nn.functional import dropout
 from torch_geometric.nn import SAGEConv  # GraphSAGE 레이어 사용
 from torch_geometric.nn import global_mean_pool
+
+__all__ = ["LitGraphSAGE"]
 
 class LitGraphSAGE(pl.LightningModule):
     """
@@ -51,6 +55,7 @@ class LitGraphSAGE(pl.LightningModule):
 
         assert isinstance(pos_weight, float), f"pos_weight should be a float, got {type(pos_weight)}"
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
+
         self.save_hyperparameters()
 
         self._is_binary_classification = output_dim == 1
@@ -66,19 +71,151 @@ class LitGraphSAGE(pl.LightningModule):
         Returns:
             torch.Tensor: Output logits.
         """
+        
         for layer in self.layers[:-1]:
             x = layer(x, edge_index)
             x = torch.relu(x)
             x = dropout(x, p=self.dropout, training=self.training)
-
-        x = self.layers[-1](x, edge_index)
-
+            
+        # output = self.layers[-1](x, edge_index),
+        # x = self.layers[-1](x, edge_index)
+        # print(type(x), x.shape)
         # Global pooling layer (you can customize this based on your problem)
-        x = global_mean_pool(x, torch.zeros(x.size(0), dtype=torch.long))
+        # x = global_mean_pool(x, torch.zeros(x.size(0), dtype=torch.long).to(x.device))
+        # print(type(x), x.shape)
 
-        return x
+        return self.layers[-1](x, edge_index)
 
-    # ... (이전 코드와 동일한 training, validation, test, predict_step 함수 등을 포함)
+    def training_step(self, batch, batch_idx):
+        """
+        Training step for GraphSAGE.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+
+        Returns:
+            torch.Tensor: Training loss.
+        """
+        x, edge_index, y = batch.x, batch.edge_index, batch.y
+
+        output = self.forward(x, edge_index)
+        output = output.squeeze(-1)
+
+        y_masked = y[batch.train_mask]
+        output_masked = output[batch.train_mask][y_masked != -100]
+        y_masked = y_masked[y_masked != -100]
+
+        loss = self.loss_fn.forward(output_masked, y_masked)
+
+        self.log("train_loss", loss)
+        
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        """
+        Validation step for GraphSAGE.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+
+        Returns:
+            torch.Tensor: Validation loss.
+        """
+        x, edge_index, y = batch.x, batch.edge_index, batch.y
+
+        output = self.forward(x, edge_index)
+        output = output.squeeze(-1)
+
+        y_masked = y[batch.val_mask]
+        output_masked = output[batch.val_mask][y_masked != -100]
+        y_masked = y_masked[y_masked != -100]
+
+        loss = self.loss_fn.forward(output_masked, y_masked)
+        self.log("val_loss", loss)
+        self.log_metrics(output_masked, y_masked, prefix="val_")
+        
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        """
+        Test step for GraphSAGE.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+
+        Returns:
+            torch.Tensor: Test loss.
+        """
+        x, edge_index, y = batch.x, batch.edge_index, batch.y
+
+        output = self.forward(x, edge_index)
+        output = output.squeeze(-1)
+
+        y_masked = y[batch.test_mask]
+        output_masked = output[batch.test_mask][y_masked != -100]
+        y_masked = y_masked[y_masked != -100]
+
+        loss = self.loss_fn.forward(output_masked, y_masked)
+
+        self.log("test_loss", loss)
+        self.log_metrics(output_masked, y_masked, prefix="test_")
+        return loss
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=None):
+        """
+        Predict step for GraphSAGE.
+
+        Args:
+            batch: Batch of data.
+            batch_idx: Batch index.
+            dataloader_idx: Dataloader index.
+
+        Returns:
+            torch.Tensor: Model predictions.
+        """
+        x, edge_index, y = batch.x, batch.edge_index, batch.y
+
+        output = self.forward(x, edge_index)
+        output = output.squeeze(-1)
+
+        y_masked = y[batch.test_mask]
+        output_masked = output[batch.test_mask][y_masked != -100]
+        y_masked = y_masked[y_masked != -100]
+
+        return y_masked, output_masked
+
+    @torch.no_grad()
+    def log_metrics(self, output, target, prefix=""):
+        """
+        Log additional metrics during validation and test.
+
+        Args:
+            output (torch.Tensor): Model predictions.
+            target (torch.Tensor): Ground truth labels.
+            prefix (str): Metric name prefix for logging.
+        """
+        if self._is_binary_classification:
+            predicted_labels = torch.round(torch.sigmoid(output))
+        else:
+            predicted_labels = torch.argmax(torch.softmax(output), dim=1)
+        target_labels = target.float()
+
+        # Calculate and log recall
+        recall = recall_score(target_labels.cpu().numpy(), predicted_labels.cpu().numpy(), average="macro")
+        self.log(prefix + "recall", recall)
+
+        # Calculate and log AUC
+        auc = roc_auc_score(
+            target_labels.cpu().numpy(), output.cpu().detach().numpy(), average="macro", multi_class="ovr"
+        )
+        self.log(prefix + "auc", auc)
+
+        # Calculate and log macro F1-score
+        f1_macro = f1_score(target_labels.cpu().numpy(), predicted_labels.cpu().numpy(), average="macro")
+        self.log(prefix + "f1_macro", f1_macro)
 
     def configure_optimizers(self):
         """
