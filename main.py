@@ -8,8 +8,8 @@ import torch
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
 
-from data import load_data, load_data_from_matlab
-from module import LitGCN
+from data import load_data
+from module import LitGCN, ModelOutput
 from utils import get_bert_embedding, parse_args, print_confusion_matrix
 
 
@@ -20,16 +20,16 @@ def main(args: Namespace):
 
     print("Loading data...")
     data = load_data(
-        edge_index_path="dataset/amazon_instruments_user_all.npz",
-        features_path="dataset/amazon_instruments_features.npy",
-        labels_path="dataset/amazon_instruments_labels.pkl",
-        split_file="dataset/amazon_instruments_split_masks.pkl",
+        edge_index_path=args.edge_index_path,
+        features_path=args.features_path,
+        labels_path=args.labels_path,
+        split_file=args.split_file,
     )
     data.validate()
     dataloader = DataLoader([data], shuffle=False, collate_fn=lambda x: x[0])
 
     if args.bert:
-        user_text = pickle.load(open("dataset/amazon_instruments_user_text.pkl", "rb"))
+        user_text = pickle.load(open(args.user_text_path, "rb"))
         bert_embedding = get_bert_embedding(user_text, args.bert_embedding_path)
     else:
         bert_embedding = None
@@ -50,18 +50,21 @@ def main(args: Namespace):
         autoencoder=args.gcn_autoencoder,
     )
 
-    run_name = "GCN-Fraud-Detection"
-    if args.bert:
-        if args.gcn_autoencoder:
-            run_name += "-BERT-AE"
-        else:
-            run_name += "-BERT"
+    if args.run_name is None:
+        run_name = "GCN-Fraud-Detection"
+        if args.bert:
+            if args.gcn_autoencoder:
+                run_name += "-BERT-AE"
+            else:
+                run_name += "-BERT"
+        args.run_name = run_name
+    else:
+        run_name = args.run_name
+    print(f"Run name: {run_name}")
 
-    logger = TensorBoardLogger(
-        "logs", name=run_name, default_hp_metric=False
-    )
+    logger = TensorBoardLogger("logs", name=run_name, default_hp_metric=False)
     trainer = pl.Trainer(
-        max_epochs=3000,
+        max_epochs=args.trainer_max_epochs,
         devices=1,
         callbacks=[
             # callbacks.EarlyStopping(monitor="val_auc", patience=50, mode="max"),
@@ -76,6 +79,9 @@ def main(args: Namespace):
         enable_progress_bar=False,
     )
 
+    if not isinstance(logger, TensorBoardLogger):
+        logger.log_hyperparams(params=args)
+
     print("Training...")
     trainer.fit(module, train_dataloaders=dataloader, val_dataloaders=dataloader)
     print(f"Trained {trainer.current_epoch + 1} epochs")
@@ -83,22 +89,32 @@ def main(args: Namespace):
     test_metrics = trainer.test(module, dataloaders=dataloader)
 
     # Save output and metrics
-    output: list[tuple[torch.Tensor, torch.Tensor]] = trainer.predict(module, dataloaders=dataloader)
+    output: list[ModelOutput] = trainer.predict(module, dataloaders=dataloader)
 
+    node_embeddings = []
     y = []
     pred = []
 
     for out in output:
-        y.append(out[0])
-        pred.append(out[1])
+        node_embeddings.append(out.node_embedding)
+        y.append(out.y)
+        pred.append(out.output)
 
+    node_embeddings = torch.cat(node_embeddings)
     y = torch.cat(y)
     pred = torch.cat(pred)
 
     pred = torch.round(torch.sigmoid(pred))
     print_confusion_matrix(y, pred)
 
-    logger.log_hyperparams(params=args, metrics=test_metrics[0])
+    if isinstance(logger, TensorBoardLogger):
+        logger.log_hyperparams(params=args, metrics=test_metrics[0])
+
+    # Save node_embeddings to logger directory
+    torch.save(node_embeddings, logger.log_dir + "/node_embeddings.pt")
+    print(f"Saved node embeddings to {logger.log_dir}/node_embeddings.pt")
+    print(f" Shape: {node_embeddings.shape}")
+
     logger.save()
 
 
