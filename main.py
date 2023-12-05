@@ -13,6 +13,7 @@ from module import LitGCN, ModelOutput
 from utils import get_bert_embedding, parse_args, print_confusion_matrix
 
 
+
 def main(args: Namespace):
     warnings.filterwarnings("ignore")
 
@@ -36,19 +37,31 @@ def main(args: Namespace):
 
     # Initialize and set up the model, optimizer, and data loader
     pl.seed_everything(args.seed)
-    module = LitGCN(
-        input_dim=data.num_features,
-        hidden_dim=args.gcn_hidden_dim,
-        output_dim=1,
-        lr=args.module_lr,
-        weight_decay=args.module_weight_decay,
-        pos_weight=args.gcn_pos_weight,
-        dropout=args.gcn_dropout,
-        num_layers=args.gcn_num_layers,
-        bert_embedding=bert_embedding,
-        bert_reduced_dim=args.bert_reduced_dim,
-        autoencoder=args.gcn_autoencoder,
-    )
+    print(f"Using module: {args.module_type}")
+    if args.module_type == "GCN":
+        module = LitGCN(
+            input_dim=data.num_features,
+            hidden_dim=args.gcn_hidden_dim,
+            output_dim=1,
+            lr=args.module_lr,
+            weight_decay=args.module_weight_decay,
+            pos_weight=args.gcn_pos_weight,
+            dropout=args.gcn_dropout,
+            num_layers=args.gcn_num_layers,
+        )
+    elif args.module_type == "GraphSAGE":
+        module = LitGraphSAGE(
+            input_dim=data.num_features,
+            hidden_dim=args.graphsage_hidden_dim,
+            output_dim=1,
+            lr=args.module_lr,
+            weight_decay=args.module_weight_decay,
+            pos_weight=args.graphsage_pos_weight,
+            dropout=args.graphsage_dropout,
+            num_layers=args.graphsage_num_layers,
+        )
+    else:
+        raise ValueError(f"Invalid module name: {module_type}")
 
     if args.run_name is None:
         run_name = "GCN-Fraud-Detection"
