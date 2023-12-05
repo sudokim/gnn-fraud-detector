@@ -6,6 +6,8 @@ from sklearn.metrics import f1_score, recall_score, roc_auc_score
 from torch.nn.functional import dropout
 from torch_geometric.nn import GCNConv
 
+from ._autoencoder import AutoEncoder
+
 __all__ = ["LitGCN"]
 
 
@@ -26,6 +28,7 @@ class LitGCN(pl.LightningModule):
         dropout: float = 0.2,
         bert_embedding: torch.Tensor | None = None,
         bert_reduced_dim: int | None = None,
+        autoencoder: bool = False,
     ):
         """
         Initializes a GCN model for node classification.
@@ -41,12 +44,14 @@ class LitGCN(pl.LightningModule):
             dropout (float): Dropout probability (default: 0.2).
             bert_embedding (torch.Tensor): Pre-computed BERT embedding. If None, BERT embedding will not be used.
             bert_reduced_dim (int): Dimensionality of the reduced BERT embedding.
+            autoencoder (bool): Whether to use autoencoder for BERT embedding.
         """
         super(LitGCN, self).__init__()
 
         self.lr = lr
         self.weight_decay = weight_decay
         self.dropout = dropout
+        self._autoencoder = autoencoder
 
         if bert_embedding is None:
             self.bert_embedding = None
@@ -54,7 +59,10 @@ class LitGCN(pl.LightningModule):
             self.bert_layer_norm = None
         else:
             self.bert_embedding = nn.Embedding.from_pretrained(bert_embedding, freeze=True)
-            self.bert_adapter = nn.Linear(bert_embedding.shape[1], bert_reduced_dim)
+            if autoencoder:
+                self.bert_adapter = AutoEncoder([bert_embedding.shape[1], bert_reduced_dim])
+            else:
+                self.bert_adapter = nn.Linear(bert_embedding.shape[1], bert_reduced_dim)
             self.bert_layer_norm = nn.LayerNorm(bert_reduced_dim)
 
             input_dim += bert_reduced_dim
@@ -67,7 +75,8 @@ class LitGCN(pl.LightningModule):
         self.layers = nn.ModuleList(_modules)
 
         assert isinstance(pos_weight, float), f"pos_weight should be a float, got {type(pos_weight)}"
-        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
+        self.loss_fn_clf = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
+        self.loss_fn_ae = nn.MSELoss()
 
         self.save_hyperparameters(ignore="bert_embedding")
 
@@ -85,16 +94,25 @@ class LitGCN(pl.LightningModule):
             torch.Tensor: Output logits.
         """
         if self.bert_embedding is not None and self.bert_adapter is not None and self.bert_layer_norm is not None:
-            bert_embedding_forward = self.bert_adapter.forward(self.bert_embedding.weight)
-            bert_embedding_forward = self.bert_layer_norm.forward(bert_embedding_forward)
+            if self._autoencoder:
+                auto_enc, auto_dec = self.bert_adapter.forward(self.bert_embedding.weight)
+                bert_embedding_forward = self.bert_layer_norm.forward(auto_enc)
+            else:
+                bert_embedding_forward = self.bert_adapter.forward(self.bert_embedding.weight)
+                auto_enc = None
+                auto_dec = None
             x = torch.cat([x, bert_embedding_forward], dim=1)
+
+        else:
+            auto_enc = None
+            auto_dec = None
 
         for layer in self.layers[:-1]:
             x = layer(x, edge_index)
             x = torch.relu(x)
             x = dropout(x, p=self.dropout, training=self.training)
 
-        return self.layers[-1](x, edge_index)
+        return self.layers[-1](x, edge_index), auto_dec
 
     def training_step(self, batch, batch_idx):
         """
@@ -109,16 +127,28 @@ class LitGCN(pl.LightningModule):
         """
         x, edge_index, y = batch.x, batch.edge_index, batch.y
 
-        output = self.forward(x, edge_index)
+        output, auto_dec = self.forward(x, edge_index)
         output = output.squeeze(-1)
 
         y_masked = y[batch.train_mask]
         output_masked = output[batch.train_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
 
-        loss = self.loss_fn.forward(output_masked, y_masked)
+        loss_clf = self.loss_fn_clf.forward(output_masked, y_masked)
+        if self._autoencoder:
+            loss_ae = self.loss_fn_ae.forward(auto_dec, self.bert_embedding.weight)
+            loss = loss_clf + loss_ae
+        else:
+            loss_ae = None
+            loss = loss_clf
 
-        self.log("train_loss", loss)
+        self.log_dict(
+            {
+                "train_loss": loss,
+                "train_loss_clf": loss_clf,
+            }
+            | ({"train_loss_ae": loss_ae} if loss_ae is not None else {})
+        )
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -134,18 +164,21 @@ class LitGCN(pl.LightningModule):
         """
         x, edge_index, y = batch.x, batch.edge_index, batch.y
 
-        output = self.forward(x, edge_index)
+        output, auto_dec = self.forward(x, edge_index)
         output = output.squeeze(-1)
 
         y_masked = y[batch.val_mask]
         output_masked = output[batch.val_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
 
-        loss = self.loss_fn.forward(output_masked, y_masked)
+        loss_clf = self.loss_fn_clf.forward(output_masked, y_masked)
+        if self._autoencoder:
+            loss_ae = self.loss_fn_ae.forward(auto_dec, self.bert_embedding.weight)
+            self.log("val_loss_ae", loss_ae)
 
-        self.log("val_loss", loss)
+        self.log("val_loss", loss_clf)
         self.log_metrics(output_masked, y_masked, prefix="val_")
-        return loss
+        return loss_clf
 
     def test_step(self, batch, batch_idx):
         """
@@ -160,14 +193,17 @@ class LitGCN(pl.LightningModule):
         """
         x, edge_index, y = batch.x, batch.edge_index, batch.y
 
-        output = self.forward(x, edge_index)
+        output, auto_dec = self.forward(x, edge_index)
         output = output.squeeze(-1)
 
         y_masked = y[batch.test_mask]
         output_masked = output[batch.test_mask][y_masked != -100]
         y_masked = y_masked[y_masked != -100]
 
-        loss = self.loss_fn.forward(output_masked, y_masked)
+        loss = self.loss_fn_clf.forward(output_masked, y_masked)
+        if self._autoencoder:
+            loss_ae = self.loss_fn_ae.forward(auto_dec, self.bert_embedding.weight)
+            self.log("test_loss_ae", loss_ae)
 
         self.log("test_loss", loss)
         self.log_metrics(output_masked, y_masked, prefix="test_")
@@ -187,7 +223,7 @@ class LitGCN(pl.LightningModule):
         """
         x, edge_index, y = batch.x, batch.edge_index, batch.y
 
-        output = self.forward(x, edge_index)
+        output, _ = self.forward(x, edge_index)
         output = output.squeeze(-1)
 
         y_masked = y[batch.test_mask]

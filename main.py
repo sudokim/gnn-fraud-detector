@@ -47,10 +47,18 @@ def main(args: Namespace):
         num_layers=args.gcn_num_layers,
         bert_embedding=bert_embedding,
         bert_reduced_dim=args.bert_reduced_dim,
+        autoencoder=args.gcn_autoencoder,
     )
 
+    run_name = "GCN-Fraud-Detection"
+    if args.bert:
+        if args.gcn_autoencoder:
+            run_name += "-BERT-AE"
+        else:
+            run_name += "-BERT"
+
     logger = TensorBoardLogger(
-        "logs", name="GCN-Fraud-Detection" + "-BERT" if args.bert else "", default_hp_metric=False
+        "logs", name=run_name, default_hp_metric=False
     )
     trainer = pl.Trainer(
         max_epochs=3000,

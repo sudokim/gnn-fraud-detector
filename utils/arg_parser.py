@@ -34,6 +34,9 @@ def parse_args():
     module_gcn.add_argument(
         "--gcn_pos_weight", type=float, default=10.0, help="Positive class weight of the GCN module"
     )
+    module_gcn.add_argument(
+        "--gcn_autoencoder", action="store_true", help="Whether to use autoencoder for BERT embedding"
+    )
 
     trainer = parser.add_argument_group("Trainer")
     trainer.add_argument("--trainer_max_epochs", type=int, default=2000, help="Maximum number of epochs to train")
