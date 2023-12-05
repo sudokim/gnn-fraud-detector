@@ -16,9 +16,10 @@ class LitTFN(pl.LightningModule):
     def __init__(
         self,
         latent_dim,
-        gcn_input_dim,
-        gcn_latent_dim,
+        gnn_input_dim,
+        gnn_latent_dim,
         bert_embedding,
+        gnn_cls=gnn.GCNConv,
         lr=0.01,
         weight_decay=5e-4,
         dropout=0.1,
@@ -34,34 +35,34 @@ class LitTFN(pl.LightningModule):
         self.bert_layer = nn.Sequential(
             nn.LazyLinear(256), nn.ReLU(), nn.LazyLinear(128), nn.ReLU(), nn.LazyLinear(latent_dim)
         )
-        self.gcn_upu = gnn.Sequential(
+        self.gnn_upu = gnn.Sequential(
             "x, edge_index",
             [
-                (gnn.GCNConv(gcn_input_dim, gcn_latent_dim), "x, edge_index -> x"),
+                (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
                 nn.ReLU(),
                 nn.Dropout(dropout),
-                (gnn.GCNConv(gcn_latent_dim, gcn_latent_dim), "x, edge_index -> x"),
-                nn.Linear(gcn_latent_dim, latent_dim),
+                (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
+                nn.Linear(gnn_latent_dim, latent_dim),
             ],
         )
-        self.gcn_usu = gnn.Sequential(
+        self.gnn_usu = gnn.Sequential(
             "x, edge_index",
             [
-                (gnn.GCNConv(gcn_input_dim, gcn_latent_dim), "x, edge_index -> x"),
+                (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
                 nn.ReLU(),
                 nn.Dropout(dropout),
-                (gnn.GCNConv(gcn_latent_dim, gcn_latent_dim), "x, edge_index -> x"),
-                nn.Linear(gcn_latent_dim, latent_dim),
+                (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
+                nn.Linear(gnn_latent_dim, latent_dim),
             ],
         )
-        self.gcn_uvu = gnn.Sequential(
+        self.gnn_uvu = gnn.Sequential(
             "x, edge_index",
             [
-                (gnn.GCNConv(gcn_input_dim, gcn_latent_dim), "x, edge_index -> x"),
+                (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
                 nn.ReLU(),
                 nn.Dropout(dropout),
-                (gnn.GCNConv(gcn_latent_dim, gcn_latent_dim), "x, edge_index -> x"),
-                nn.Linear(gcn_latent_dim, latent_dim),
+                (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
+                nn.Linear(gnn_latent_dim, latent_dim),
             ],
         )
 
@@ -80,9 +81,9 @@ class LitTFN(pl.LightningModule):
         # Concatenate one vector column to each embedding
         bert_output = self.bert_layer.forward(self.bert_embedding)
 
-        gcn_upu_output = self.gcn_upu.forward(upu.x, upu.edge_index)
-        gcn_usu_output = self.gcn_usu.forward(usu.x, usu.edge_index)
-        gcn_uvu_output = self.gcn_uvu.forward(uvu.x, uvu.edge_index)
+        gcn_upu_output = self.gnn_upu.forward(upu.x, upu.edge_index)
+        gcn_usu_output = self.gnn_usu.forward(usu.x, usu.edge_index)
+        gcn_uvu_output = self.gnn_uvu.forward(uvu.x, uvu.edge_index)
 
         post_fusion_embeddings_cat = [
             torch.cat(
