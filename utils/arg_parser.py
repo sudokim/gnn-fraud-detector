@@ -43,6 +43,14 @@ def parse_args():
     module_gcn.add_argument(
         "--gcn_autoencoder", action="store_true", help="Whether to use autoencoder for BERT embedding"
     )
+    
+    module_graphsage = module.add_argument_group("graphsage")
+    module_graphsage.add_argument("--graphsage_hidden_dim", type=int, default=16, help="Hidden dimension of the GraphSAGE module")
+    module_graphsage.add_argument("--graphsage_dropout", type=float, default=0.5, help="Dropout rate of the GraphSAGE module")
+    module_graphsage.add_argument("--graphsage_num_layers", type=int, default=2, help="Number of layers of the GraphSAGE module")
+    module_graphsage.add_argument(
+        "--graphsage_pos_weight", type=float, default=10.0, help="Positive class weight of the GraphSAGE module"
+    )
 
     trainer = parser.add_argument_group("Trainer")
     trainer.add_argument("--trainer_max_epochs", type=int, default=2000, help="Maximum number of epochs to train")
