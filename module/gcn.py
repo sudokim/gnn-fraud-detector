@@ -128,14 +128,14 @@ class LitGCN(pl.LightningModule):
             auto_dec = None
 
         for layer in self.layers[:-1]:
-            x = layer(x, edge_index)
-            x = torch.relu(x)
+            node_embedding = layer(x, edge_index)
+            x = torch.relu(node_embedding)
             x = dropout(x, p=self.dropout, training=self.training)
 
         return ModelOutput(
             output=self.layers[-1](x, edge_index),
             auto_dec=auto_dec,
-            node_embedding=x,
+            node_embedding=node_embedding,
         )
 
     def training_step(self, batch, batch_idx):
