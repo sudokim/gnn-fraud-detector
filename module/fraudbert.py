@@ -24,73 +24,96 @@ class FraudBert(pl.LightningModule):
         super().__init__()
 
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=1)
-        self.loss_fn = nn.BCEWithLogitsLoss()
+        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(10))
 
         self.lr = lr
         self.weight_decay = weight_decay
 
-    def forward(self, input_ids, attention_mask):
-        return self.model(input_ids=input_ids, attention_mask=attention_mask)
+        self._labels = []
+        self._predictions = []
+
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)["logits"].squeeze(-1)
 
     def training_step(self, batch, batch_idx):
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        labels = batch["label"].reshape(-1, 1)
+        labels = batch["labels"]
+        del batch["labels"]
 
-        output = self.forward(input_ids, attention_mask)
-        loss = self.loss_fn(output.logits, labels.float())
-        self.log("train_loss", loss)
+        output = self.forward(**batch)
+        loss = self.loss_fn(output, labels.float())
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
+
+    def on_validation_epoch_start(self) -> None:
+        self._labels.clear()
+        self._predictions.clear()
 
     def validation_step(self, batch, batch_idx):
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        labels = batch["label"].reshape(-1, 1)
+        labels = batch["labels"]
+        del batch["labels"]
 
-        output = self.forward(input_ids, attention_mask)
-        loss = self.loss_fn(output.logits, labels.float())
-        self.log("val_loss", loss)
+        output = self.forward(**batch)
+        loss = self.loss_fn(output, labels.float())
+        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+
+        self._labels.append(labels.cpu())
+        self._predictions.append(output.cpu())
+        
         return loss
 
+    def on_validation_epoch_end(self):
+        labels = torch.cat(self._labels, dim=0)
+        predictions = torch.cat(self._predictions, dim=0)
+
+        self.log_metrics(predictions, labels, prefix="val_")
+        
+    def on_test_epoch_start(self):
+        self._labels.clear()
+        self._predictions.clear()
+    
     def test_step(self, batch, batch_idx):
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        labels = batch["label"].reshape(-1, 1)
+        labels = batch["labels"]
+        del batch["labels"]
 
-        output = self.forward(input_ids, attention_mask)
-        loss = self.loss_fn(output.logits, labels.float())
-        self.log("test_loss", loss)
-        self.log_metrics(output, labels, prefix="test_")
+        output = self.forward(**batch)
+        loss = self.loss_fn(output, labels.float())
+        self.log("test_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
+        self._labels.append(labels.cpu())
+        self._predictions.append(output.cpu())
+        
         return loss
+
+    def on_test_epoch_end(self):
+        labels = torch.cat(self._labels, dim=0)
+        predictions = torch.cat(self._predictions, dim=0)
+
+        self.log_metrics(predictions, labels, prefix="test_")
 
     def predict_step(self, batch, batch_idx, dataloader_idx=None):
-        input_ids = batch["input_ids"]
-        attention_mask = batch["attention_mask"]
-        labels = batch["label"].reshape(-1, 1)
-
-        output = self.forward(input_ids, attention_mask)
-        return labels, output.logits
+        labels = batch["labels"]
+        del batch["labels"]
+        
+        return labels, self.forward(**batch)
 
     @torch.no_grad()
     def log_metrics(self, output, target, prefix=""):
-
-        output = output.logits
         predicted_labels = torch.round(torch.sigmoid(output))
         target_labels = target.float()
 
         # Calculate and log recall
         recall = recall_score(target_labels.cpu().numpy(), predicted_labels.cpu().numpy(), average="macro")
-        self.log(prefix + "recall", recall)
+        self.log(prefix + "recall", recall, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
         # Calculate and log AUC
         auc = roc_auc_score(
             target_labels.cpu().numpy(), output.cpu().detach().numpy(), average="macro", multi_class="ovr"
         )
-        self.log(prefix + "auc", auc)
+        self.log(prefix + "auc", auc, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
         # Calculate and log macro F1-score
         f1_macro = f1_score(target_labels.cpu().numpy(), predicted_labels.cpu().numpy(), average="macro")
-        self.log(prefix + "f1_macro", f1_macro)
+        self.log(prefix + "f1_macro", f1_macro, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)

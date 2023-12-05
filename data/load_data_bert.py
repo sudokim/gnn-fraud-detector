@@ -75,9 +75,9 @@ def load_text_data():
                    test_review]
 
     # save
-    json.dump(train_review, open(Path(dir) / "dataset" / "amazon_instruments_train.json", "w"), indent=1)
-    json.dump(val_review, open(Path(dir) / "dataset" / "amazon_instruments_val.json", "w"), indent=1)
-    json.dump(test_review, open(Path(dir) / "dataset" / "amazon_instruments_test.json", "w"), indent=1)
+    json.dump(train_review, open(Path(dir) / "dataset" / "amazon_instruments_train.json", "w"))
+    json.dump(val_review, open(Path(dir) / "dataset" / "amazon_instruments_val.json", "w"))
+    json.dump(test_review, open(Path(dir) / "dataset" / "amazon_instruments_test.json", "w"))
 
     print("")
     return train_review, val_review, test_review

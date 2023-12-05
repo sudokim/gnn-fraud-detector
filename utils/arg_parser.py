@@ -44,8 +44,8 @@ def parse_bert_args():
 
     module = parser.add_argument_group("Module")
     module.add_argument("--model_name", type=str, default="bert-base-cased", help="Type of the model to use")
-    module.add_argument("--module_weight_decay", type=float, default=5e-4, help="Weight decay of the module")
-    module.add_argument("--module_lr", type=float, default=0.01, help="Learning rate of the module")
+    module.add_argument("--module_weight_decay", type=float, default=0.01, help="Weight decay of the module")
+    module.add_argument("--module_lr", type=float, default=5e-4, help="Learning rate of the module")
 
     trainer = parser.add_argument_group("Trainer")
 
