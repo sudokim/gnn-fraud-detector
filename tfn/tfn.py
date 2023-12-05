@@ -5,6 +5,7 @@ from sklearn.metrics import f1_score, recall_score, roc_auc_score
 import torch
 import pytorch_lightning as pl
 import torch.nn as nn
+import torch_geometric.nn as gnn
 
 
 class LitTFN(pl.LightningModule):
@@ -12,23 +13,58 @@ class LitTFN(pl.LightningModule):
     TFN with frozen embeddings.
     """
 
-    def __init__(self, embedding_dims, latent_dim, lr=0.01, weight_decay=5e-4, dropout=0.1, pos_weight=2):
-        assert isinstance(embedding_dims, list), "Embedding dimensions must be a list"
-        assert all(
-            map(lambda x: isinstance(x, int) and x > 0, embedding_dims)
-        ), "All embedding dimensions must be positive integers"
-        assert isinstance(latent_dim, int) and latent_dim > 0, "Latent dimension must be a positive integer"
+    def __init__(
+        self,
+        latent_dim,
+        gcn_input_dim,
+        gcn_latent_dim,
+        bert_embedding,
+        lr=0.01,
+        weight_decay=5e-4,
+        dropout=0.1,
+        pos_weight=1,
+    ):
         super(LitTFN, self).__init__()
 
-        self.embedding_dims = embedding_dims
-        self.num_embeddings = len(embedding_dims)
         self.latent_dim = latent_dim
         self.lr = lr
         self.weight_decay = weight_decay
+        self.bert_embedding = nn.Parameter(bert_embedding, requires_grad=False)
 
-        self.post_fusion_layers = nn.ModuleList(
-            [nn.Linear(embedding_dim, latent_dim) for embedding_dim in embedding_dims]
+        self.bert_layer = nn.Sequential(
+            nn.LazyLinear(256), nn.ReLU(), nn.LazyLinear(128), nn.ReLU(), nn.LazyLinear(latent_dim)
         )
+        self.gcn_upu = gnn.Sequential(
+            "x, edge_index",
+            [
+                (gnn.GCNConv(gcn_input_dim, gcn_latent_dim), "x, edge_index -> x"),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                (gnn.GCNConv(gcn_latent_dim, gcn_latent_dim), "x, edge_index -> x"),
+                nn.Linear(gcn_latent_dim, latent_dim),
+            ],
+        )
+        self.gcn_usu = gnn.Sequential(
+            "x, edge_index",
+            [
+                (gnn.GCNConv(gcn_input_dim, gcn_latent_dim), "x, edge_index -> x"),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                (gnn.GCNConv(gcn_latent_dim, gcn_latent_dim), "x, edge_index -> x"),
+                nn.Linear(gcn_latent_dim, latent_dim),
+            ],
+        )
+        self.gcn_uvu = gnn.Sequential(
+            "x, edge_index",
+            [
+                (gnn.GCNConv(gcn_input_dim, gcn_latent_dim), "x, edge_index -> x"),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                (gnn.GCNConv(gcn_latent_dim, gcn_latent_dim), "x, edge_index -> x"),
+                nn.Linear(gcn_latent_dim, latent_dim),
+            ],
+        )
+
         self.decision_layer = nn.Sequential(
             nn.Dropout(dropout),
             nn.LazyLinear(128),
@@ -40,21 +76,19 @@ class LitTFN(pl.LightningModule):
 
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
 
-        self._predictions = []
-        self._labels = []
-
-    def forward(self, *embeddings):
+    def forward(self, upu, usu, uvu):
         # Concatenate one vector column to each embedding
-        post_fusion_embeddings = [
-            post_fusion_layer.forward(embedding)
-            for post_fusion_layer, embedding in zip(self.post_fusion_layers, embeddings)
-        ]
+        bert_output = self.bert_layer.forward(self.bert_embedding)
+
+        gcn_upu_output = self.gcn_upu.forward(upu.x, upu.edge_index)
+        gcn_usu_output = self.gcn_usu.forward(usu.x, usu.edge_index)
+        gcn_uvu_output = self.gcn_uvu.forward(uvu.x, uvu.edge_index)
 
         post_fusion_embeddings_cat = [
             torch.cat(
                 [embedding, torch.ones(embedding.shape[0], 1, device=embedding.device, requires_grad=False)], dim=1
             )
-            for embedding in post_fusion_embeddings
+            for embedding in [bert_output, gcn_upu_output, gcn_usu_output, gcn_uvu_output]
         ]
 
         # Kronecker product
@@ -71,78 +105,91 @@ class LitTFN(pl.LightningModule):
         return predictions
 
     def training_step(self, batch, batch_idx):
-        embeddings, labels = batch
-        predictions = self.forward(*embeddings).squeeze(-1)
+        upu, usu, uvu = batch
+        label = upu.y
+        
+        predictions = self.forward(upu, usu, uvu)
 
-        y_mask = torch.ne(labels, -100)
-        predictions = predictions[y_mask]
-        labels = labels[y_mask]
-
-        loss = self.loss_fn(predictions, labels.float())
+        # Mask train
+        mask = upu.train_mask
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        # Mask out -100 in label
+        mask = label != -100
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        loss = self.loss_fn(predictions.squeeze(), label.float())
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def on_validation_epoch_start(self):
-        self._predictions.clear()
-        self._labels.clear()
-
     def validation_step(self, batch, batch_idx):
-        embeddings, labels = batch
-        predictions = self.forward(*embeddings).squeeze(-1)
+        upu, usu, uvu = batch
+        label = upu.y
+        
+        predictions = self.forward(upu, usu, uvu)
 
-        y_mask = torch.ne(labels, -100)
-        predictions = predictions[y_mask]
-        labels = labels[y_mask]
-
-        loss = self.loss_fn(predictions, labels.float())
-
-        self._predictions.append(predictions)
-        self._labels.append(labels)
+        # Mask val
+        mask = upu.val_mask
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        # Mask out -100 in label
+        mask = label != -100
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        loss = self.loss_fn(predictions.squeeze(), label.float())
 
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log_metrics(predictions, label, prefix="val_")
         return loss
-
-    def on_validation_epoch_end(self):
-        predictions = torch.cat(self._predictions)
-        labels = torch.cat(self._labels)
-        self.log_metrics(predictions, labels, prefix="val_")
-
-    def on_test_epoch_start(self):
-        self._predictions.clear()
-        self._labels.clear()
 
     def test_step(self, batch, batch_idx):
-        embeddings, labels = batch
-        predictions = self.forward(*embeddings).squeeze(-1)
+        upu, usu, uvu = batch
+        label = upu.y
+        
+        predictions = self.forward(upu, usu, uvu)
 
-        y_mask = torch.ne(labels, -100)
-        predictions = predictions[y_mask]
-        labels = labels[y_mask]
-
-        loss = self.loss_fn(predictions, labels.float())
-
-        self._predictions.append(predictions)
-        self._labels.append(labels)
+        # Mask test
+        mask = upu.test_mask
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        # Mask out -100 in label
+        mask = label != -100
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        loss = self.loss_fn(predictions.squeeze(), label.float())
 
         self.log("test_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log_metrics(predictions, label, prefix="test_")
         return loss
-
-    def on_test_epoch_end(self):
-        predictions = torch.cat(self._predictions)
-        labels = torch.cat(self._labels)
-        self.log_metrics(predictions, labels, prefix="test_")
-
+    
     def predict_step(self, batch, batch_idx, dataloader_idx=None):
-        embeddings, labels = batch
-        predictions = self.forward(*embeddings).squeeze(-1)
+        upu, usu, uvu = batch
+        label = upu.y
+        
+        predictions = self.forward(upu, usu, uvu)
 
-        return labels, predictions
+        # Mask test
+        mask = upu.test_mask
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        # Mask out -100 in label
+        mask = label != -100
+        predictions = predictions[mask]
+        label = label[mask]
+        
+        return label, predictions.squeeze()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        return optimizer
-
+        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        
     @torch.no_grad()
     def log_metrics(self, output, target, prefix=""):
         """
@@ -169,3 +216,12 @@ class LitTFN(pl.LightningModule):
         # Calculate and log macro F1-score
         f1_macro = f1_score(target_labels.cpu().numpy(), predicted_labels.cpu().numpy(), average="macro")
         self.log(prefix + "f1_macro", f1_macro, on_step=False, on_epoch=True, prog_bar=True, logger=True)
+
+    def configure_optimizers(self):
+        """
+        Configure the optimizer for training.
+
+        Returns:
+            torch.optim.Optimizer: Optimizer object.
+        """
+        return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
