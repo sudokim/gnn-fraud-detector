@@ -9,7 +9,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
 
 from data import load_data
-from module import LitGCN, ModelOutput
+from module import LitGCN, LitGraphSAGE, ModelOutput
 from utils import get_bert_embedding, parse_args, print_confusion_matrix
 
 
@@ -49,7 +49,7 @@ def main(args: Namespace):
             dropout=args.gcn_dropout,
             num_layers=args.gcn_num_layers,
         )
-    elif args.module_type == "GraphSAGE":
+    elif args.module_type == "graphsage":
         module = LitGraphSAGE(
             input_dim=data.num_features,
             hidden_dim=args.graphsage_hidden_dim,
@@ -109,24 +109,37 @@ def main(args: Namespace):
     pred = []
 
     for out in output:
-        node_embeddings.append(out.node_embedding)
-        y.append(out.y)
-        pred.append(out.output)
+        y.append(out[0])
+        pred.append(out[1])
 
-    node_embeddings = torch.cat(node_embeddings)
     y = torch.cat(y)
     pred = torch.cat(pred)
 
     pred = torch.round(torch.sigmoid(pred))
     print_confusion_matrix(y, pred)
+    
+    # y = []
+    # pred = []
+
+    # for out in output:
+    #     node_embeddings.append(out.node_embedding)
+    #     y.append(out.y)
+    #     pred.append(out.output)
+
+    # node_embeddings = torch.cat(node_embeddings)
+    # y = torch.cat(y)
+    # pred = torch.cat(pred)
+
+    # pred = torch.round(torch.sigmoid(pred))
+    # print_confusion_matrix(y, pred)
 
     if isinstance(logger, TensorBoardLogger):
         logger.log_hyperparams(params=args, metrics=test_metrics[0])
 
     # Save node_embeddings to logger directory
-    torch.save(node_embeddings, logger.log_dir + "/node_embeddings.pt")
-    print(f"Saved node embeddings to {logger.log_dir}/node_embeddings.pt")
-    print(f" Shape: {node_embeddings.shape}")
+    # torch.save(node_embeddings, logger.log_dir + "/node_embeddings.pt")
+    # print(f"Saved node embeddings to {logger.log_dir}/node_embeddings.pt")
+    # print(f" Shape: {node_embeddings.shape}")
 
     logger.save()
 
