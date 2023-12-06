@@ -89,9 +89,9 @@ class LitGCN(pl.LightningModule):
 
         # Define the GCN layers
         _modules = [GCNConv(input_dim, hidden_dim)]
-        for _ in range(num_layers - 2):
+        for _ in range(num_layers - 1):
             _modules.append(GCNConv(hidden_dim, hidden_dim))
-        _modules.append(GCNConv(hidden_dim, output_dim))
+        self.linear = nn.Linear(hidden_dim, output_dim)
         self.layers = nn.ModuleList(_modules)
 
         assert isinstance(pos_weight, float), f"pos_weight should be a float, got {type(pos_weight)}"
@@ -127,13 +127,16 @@ class LitGCN(pl.LightningModule):
             auto_enc = None
             auto_dec = None
 
-        for layer in self.layers[:-1]:
+        node_embedding = None
+        for layer in self.layers:
             node_embedding = layer(x, edge_index)
             x = torch.relu(node_embedding)
             x = dropout(x, p=self.dropout, training=self.training)
+        
+        output = self.linear(x)
 
         return ModelOutput(
-            output=self.layers[-1](x, edge_index),
+            output=output,
             auto_dec=auto_dec,
             node_embedding=node_embedding,
         )
