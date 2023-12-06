@@ -1,11 +1,11 @@
 """
 Tensor Fusion Network (TFN) model from "Tensor Fusion Network for Multimodal Sentiment Analysis"
 """
-from sklearn.metrics import f1_score, recall_score, roc_auc_score
-import torch
 import pytorch_lightning as pl
+import torch
 import torch.nn as nn
 import torch_geometric.nn as gnn
+from sklearn.metrics import f1_score, recall_score, roc_auc_score
 
 
 class LitTFN(pl.LightningModule):
@@ -15,7 +15,8 @@ class LitTFN(pl.LightningModule):
 
     def __init__(
         self,
-        latent_dim,
+        num_gnns,
+        tfn_latent_dim,
         gnn_input_dim,
         gnn_latent_dim,
         bert_embedding,
@@ -25,46 +26,45 @@ class LitTFN(pl.LightningModule):
         dropout=0.1,
         pos_weight=1,
     ):
+        """
+        Initialize TFN model.
+
+        Args:
+            num_gnns (int): Number of GNNs to use.
+            tfn_latent_dim (int): Latent dimension of the model.
+            gnn_input_dim (int): Number of input features to the GNN.
+            gnn_latent_dim (int): Latent dimension of the GNN.
+            bert_embedding (torch.Tensor): BERT embeddings.
+            gnn_cls (Type[nn.Module], optional): GNN class to use to construct the GNN. Defaults to gnn.GCNConv.
+            lr (float, optional): Learning rate. Defaults to 0.01.
+            weight_decay (float, optional): L2 normalization. Defaults to 5e-4.
+            dropout (float, optional): Dropout within the model. Defaults to 0.1.
+            pos_weight (int, optional): Loss weight for the positive class. Defaults to 1.
+        """
         super(LitTFN, self).__init__()
 
-        self.latent_dim = latent_dim
+        self.tfn_latent_dim = tfn_latent_dim
         self.lr = lr
         self.weight_decay = weight_decay
         self.bert_embedding = nn.Parameter(bert_embedding, requires_grad=False)
 
-        self.bert_layer = nn.Sequential(
-            nn.LazyLinear(256), nn.ReLU(), nn.LazyLinear(128), nn.ReLU(), nn.LazyLinear(latent_dim)
+        self.bert_subnetwork = nn.Sequential(
+            nn.LazyLinear(256), nn.ReLU(), nn.LazyLinear(128), nn.ReLU(), nn.LazyLinear(tfn_latent_dim)
         )
-        self.gnn_upu = gnn.Sequential(
-            "x, edge_index",
-            [
-                (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
-                nn.Linear(gnn_latent_dim, latent_dim),
-            ],
-        )
-        self.gnn_usu = gnn.Sequential(
-            "x, edge_index",
-            [
-                (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
-                nn.Linear(gnn_latent_dim, latent_dim),
-            ],
-        )
-        self.gnn_uvu = gnn.Sequential(
-            "x, edge_index",
-            [
-                (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
-                nn.Linear(gnn_latent_dim, latent_dim),
-            ],
-        )
+
+        def _gnn_builder():
+            return gnn.Sequential(
+                "x, edge_index",
+                [
+                    (gnn_cls(gnn_input_dim, gnn_latent_dim), "x, edge_index -> x"),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                    (gnn_cls(gnn_latent_dim, gnn_latent_dim), "x, edge_index -> x"),
+                    nn.Linear(gnn_latent_dim, tfn_latent_dim),
+                ],
+            )
+
+        self.gnns = nn.ModuleList([_gnn_builder() for _ in range(num_gnns)])
 
         self.decision_layer = nn.Sequential(
             nn.Dropout(dropout),
@@ -77,19 +77,17 @@ class LitTFN(pl.LightningModule):
 
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
 
-    def forward(self, upu, usu, uvu):
+    def forward(self, *relations):
         # Concatenate one vector column to each embedding
-        bert_output = self.bert_layer.forward(self.bert_embedding)
+        bert_output = self.bert_subnetwork.forward(self.bert_embedding)
 
-        gcn_upu_output = self.gnn_upu.forward(upu.x, upu.edge_index)
-        gcn_usu_output = self.gnn_usu.forward(usu.x, usu.edge_index)
-        gcn_uvu_output = self.gnn_uvu.forward(uvu.x, uvu.edge_index)
+        gcn_outputs = [gnn.forward(relation.x, relation.edge_index) for gnn, relation in zip(self.gnns, relations)]
 
         post_fusion_embeddings_cat = [
             torch.cat(
                 [embedding, torch.ones(embedding.shape[0], 1, device=embedding.device, requires_grad=False)], dim=1
             )
-            for embedding in [bert_output, gcn_upu_output, gcn_usu_output, gcn_uvu_output]
+            for embedding in ([bert_output] + gcn_outputs)
         ]
 
         # Kronecker product
@@ -106,42 +104,42 @@ class LitTFN(pl.LightningModule):
         return predictions
 
     def training_step(self, batch, batch_idx):
-        upu, usu, uvu = batch
-        label = upu.y
-        
-        predictions = self.forward(upu, usu, uvu)
+        # Here, batch is a tuple of relations
+        # We assume all relations have the same number of nodes and same labels
+        label = batch[0].y 
+        mask = batch[0].train_mask
+
+        predictions = self.forward(*batch)
 
         # Mask train
-        mask = upu.train_mask
         predictions = predictions[mask]
         label = label[mask]
-        
+
         # Mask out -100 in label
         mask = label != -100
         predictions = predictions[mask]
         label = label[mask]
-        
+
         loss = self.loss_fn(predictions.squeeze(), label.float())
 
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        upu, usu, uvu = batch
-        label = upu.y
-        
-        predictions = self.forward(upu, usu, uvu)
+        label = batch[0].y
+        mask = batch[0].val_mask
+
+        predictions = self.forward(*batch)
 
         # Mask val
-        mask = upu.val_mask
         predictions = predictions[mask]
         label = label[mask]
-        
+
         # Mask out -100 in label
         mask = label != -100
         predictions = predictions[mask]
         label = label[mask]
-        
+
         loss = self.loss_fn(predictions.squeeze(), label.float())
 
         self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
@@ -149,48 +147,46 @@ class LitTFN(pl.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx):
-        upu, usu, uvu = batch
-        label = upu.y
-        
-        predictions = self.forward(upu, usu, uvu)
+        label = batch[0].y
+        mask = batch[0].test_mask
+
+        predictions = self.forward(*batch)
 
         # Mask test
-        mask = upu.test_mask
         predictions = predictions[mask]
         label = label[mask]
-        
+
         # Mask out -100 in label
         mask = label != -100
         predictions = predictions[mask]
         label = label[mask]
-        
+
         loss = self.loss_fn(predictions.squeeze(), label.float())
 
         self.log("test_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         self.log_metrics(predictions, label, prefix="test_")
         return loss
-    
+
     def predict_step(self, batch, batch_idx, dataloader_idx=None):
-        upu, usu, uvu = batch
-        label = upu.y
-        
-        predictions = self.forward(upu, usu, uvu)
+        label = batch[0].y
+        mask = batch[0].test_mask
+
+        predictions = self.forward(*batch)
 
         # Mask test
-        mask = upu.test_mask
         predictions = predictions[mask]
         label = label[mask]
-        
+
         # Mask out -100 in label
         mask = label != -100
         predictions = predictions[mask]
         label = label[mask]
-        
+
         return label, predictions.squeeze()
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        
+
     @torch.no_grad()
     def log_metrics(self, output, target, prefix=""):
         """

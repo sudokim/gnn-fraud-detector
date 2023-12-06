@@ -8,6 +8,7 @@ import pytorch_lightning.callbacks as callbacks
 import torch
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
+import torch_geometric.nn as gnn
 
 from data import load_data
 from tfn import LitTFN
@@ -18,7 +19,7 @@ def parse_args() -> Namespace:
     parser = ArgumentParser()
 
     trainer = parser.add_argument_group("Trainer")
-    trainer.add_argument("--max_epochs", type=int, default=50)
+    trainer.add_argument("--max_epochs", type=int, default=1000)
     trainer.add_argument("--seed", type=int, default=0)
     trainer.add_argument("--run_name", type=str, default=None)
 
@@ -56,7 +57,13 @@ def main(args: Namespace):
     # Initialize and set up the model, optimizer, and data loader
     pl.seed_everything(args.seed)
     # TODO: Replace hardcoded hyperparameters with argparse
-    module = LitTFN(16, data_upu.num_features, 32, bert_embedding)
+    module = LitTFN(
+        num_gnns=3,
+        tfn_latent_dim=16,
+        gnn_input_dim=data_upu.num_features,
+        gnn_latent_dim=32,
+        bert_embedding=bert_embedding,
+    )
 
     if args.run_name is None:
         run_name = "TFN"
