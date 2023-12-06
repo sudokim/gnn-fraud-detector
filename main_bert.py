@@ -10,7 +10,7 @@ from transformers import AutoTokenizer, DataCollatorWithPadding
 from pytorch_lightning.loggers import WandbLogger
 
 from bert_datamodule.dataset import FraudBertDataset
-from data.load_data_bert import load_text_data
+from data.load_data_bert import load_amazon_data, load_steam_data
 from module.fraudbert import FraudBert
 from utils import print_confusion_matrix
 from utils.arg_parser import parse_bert_args
@@ -26,9 +26,9 @@ class Collator:
 
         inputs = self.tokenizer(text, padding=True, truncation=True, return_tensors="pt")
         inputs["labels"] = torch.tensor(labels)
-        
+
         return inputs
-        
+
 
 def main(args: Namespace):
     warnings.filterwarnings("ignore")
@@ -37,7 +37,12 @@ def main(args: Namespace):
     pl.seed_everything(args.seed)
 
     # Load data
-    train_data, val_data, test_data = load_text_data()
+    if args.dataset == "amazon":
+        train_data, val_data, test_data = load_amazon_data(args.dataset)
+    elif args.dataset == "steam":
+        train_data, val_data, test_data = load_steam_data(args.dataset)
+    else:
+        raise ValueError("Invalid dataset")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     train_dataset = FraudBertDataset(train_data)
@@ -51,15 +56,16 @@ def main(args: Namespace):
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collator)
 
     # Initialize and set up the model, trainer, logger
-    module = FraudBert(args.model_name, lr=args.module_lr, weight_decay=args.module_weight_decay)
+    module = FraudBert(args.model_name, pos_weight=args.pos_weight, lr=args.module_lr,
+                       weight_decay=args.module_weight_decay)
     unix_time = int(time.time())
     logger = WandbLogger(project="fraudster", name=f"FraudBert_{unix_time}", log_model=True)
     trainer = pl.Trainer(
         max_epochs=3000,
         devices=1,
         callbacks=[
-            callbacks.EarlyStopping(monitor="val_loss", patience=5, mode="min"),
-            callbacks.ModelCheckpoint(monitor="val_loss", mode="min"),
+            callbacks.EarlyStopping(monitor="val/loss", patience=5, mode="min"),
+            callbacks.ModelCheckpoint(monitor="val/loss", mode="min"),
             callbacks.ModelSummary(max_depth=2),
         ],
         logger=logger,
@@ -78,7 +84,6 @@ def main(args: Namespace):
 
     # Save output and metrics
     output = trainer.predict(module, test_dataloader)
-    print(f"output {output}")
     y, pred = [], []
 
     for out in output:

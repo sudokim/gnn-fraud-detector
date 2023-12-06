@@ -19,12 +19,13 @@ class FraudBert(pl.LightningModule):
     def __init__(
             self,
             model_name,
-            lr=0.01,
-            weight_decay=5e-4, ):
+            pos_weight: int,
+            lr:float,
+            weight_decay=1e-2, ):
         super().__init__()
 
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=1)
-        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(10))
+        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(pos_weight))
 
         self.lr = lr
         self.weight_decay = weight_decay
@@ -41,7 +42,7 @@ class FraudBert(pl.LightningModule):
 
         output = self.forward(**batch)
         loss = self.loss_fn(output, labels.float())
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def on_validation_epoch_start(self) -> None:
@@ -54,7 +55,7 @@ class FraudBert(pl.LightningModule):
 
         output = self.forward(**batch)
         loss = self.loss_fn(output, labels.float())
-        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
 
         self._labels.append(labels.cpu())
         self._predictions.append(output.cpu())
@@ -65,7 +66,7 @@ class FraudBert(pl.LightningModule):
         labels = torch.cat(self._labels, dim=0)
         predictions = torch.cat(self._predictions, dim=0)
 
-        self.log_metrics(predictions, labels, prefix="val_")
+        self.log_metrics(predictions, labels, prefix="val/")
         
     def on_test_epoch_start(self):
         self._labels.clear()
@@ -77,7 +78,7 @@ class FraudBert(pl.LightningModule):
 
         output = self.forward(**batch)
         loss = self.loss_fn(output, labels.float())
-        self.log("test_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log("test/loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         
         self._labels.append(labels.cpu())
         self._predictions.append(output.cpu())
@@ -88,7 +89,7 @@ class FraudBert(pl.LightningModule):
         labels = torch.cat(self._labels, dim=0)
         predictions = torch.cat(self._predictions, dim=0)
 
-        self.log_metrics(predictions, labels, prefix="test_")
+        self.log_metrics(predictions, labels, prefix="test/")
 
     def predict_step(self, batch, batch_idx, dataloader_idx=None):
         labels = batch["labels"]

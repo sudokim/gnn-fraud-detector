@@ -4,7 +4,7 @@ import pickle
 from pathlib import Path
 import os
 
-__all__ = ["load_text_data"]
+__all__ = ["load_amazon_data"]
 
 from tqdm import tqdm
 
@@ -22,27 +22,27 @@ def load_meta_data(dir):
     return meta_dict
 
 
-def load_text_data():
-    print("Loading data for bert...")
-    if Path(os.getcwd() + "/dataset/amazon_instruments_train.json").exists():
+def load_amazon_data(data):
+    print("Loading AMAZON data for bert...")
+    if Path(os.getcwd() + f"/dataset/{data}/train.json").exists():
         print("Data already exists")
-        train_review = json.load(open(Path(os.getcwd() + "/dataset/amazon_instruments_train.json"), "r"))
-        val_review = json.load(open(Path(os.getcwd() + "/dataset/amazon_instruments_val.json"), "r"))
-        test_review = json.load(open(Path(os.getcwd() + "/dataset/amazon_instruments_test.json"), "r"))
+        train_review = json.load(open(Path(os.getcwd() + f"/dataset/{data}/train.json"), "r"))
+        val_review = json.load(open(Path(os.getcwd() + f"/dataset/{data}/val.json"), "r"))
+        test_review = json.load(open(Path(os.getcwd() + f"/dataset/{data}/test.json"), "r"))
         return train_review, val_review, test_review
 
     dir = Path(__file__).parent.parent
 
-    user_text = pickle.load(open(Path(dir) / "dataset" / "amazon_instruments_user_text.pkl",
+    user_text = pickle.load(open(Path(dir) / "dataset" / data / "user_text.pkl",
                                  "rb"))  # {node_id: (reviewerID, [(asin, "리뷰텍스트"), ...]), ...}
-    user_label = pickle.load(open(Path(dir) / "dataset" / "amazon_instruments_labels.pkl", "rb"))
+    user_label = pickle.load(open(Path(dir) / "dataset" / "labels.pkl", "rb"))
     for user_node_id, user_label in zip(user_text.keys(), user_label):
         user_text[user_node_id] = list(user_text[user_node_id])
         user_text[user_node_id].append(int(user_label))
     print(f"Number of users: {len(user_text)}")
 
     # split train, valid, test and filter out users with no labels
-    user_split = pickle.load(open(Path(dir) / "dataset" / "amazon_instruments_split_masks.pkl",
+    user_split = pickle.load(open(Path(dir) / "dataset" / "split_masks.pkl",
                                   "rb"))  # {"train": [True, False, True, True, ...], "val": [...], "test": [...]}
     train_split, val_split, test_split = user_split["train"], user_split["val"], user_split["test"]
     train_review, val_review, test_review = [], [], []
@@ -75,13 +75,22 @@ def load_text_data():
                    test_review]
 
     # save
-    json.dump(train_review, open(Path(dir) / "dataset" / "amazon_instruments_train.json", "w"))
-    json.dump(val_review, open(Path(dir) / "dataset" / "amazon_instruments_val.json", "w"))
-    json.dump(test_review, open(Path(dir) / "dataset" / "amazon_instruments_test.json", "w"))
+    json.dump(train_review, open(Path(dir) / "dataset" / "train.json", "w"))
+    json.dump(val_review, open(Path(dir) / "dataset" / "val.json", "w"))
+    json.dump(test_review, open(Path(dir) / "dataset" / "test.json", "w"))
 
     print("")
     return train_review, val_review, test_review
 
 
-if __name__ == "__main__":
-    load_text_data()
+def load_steam_data(data):
+    print("Loading STEAM data for bert...")
+    if Path(os.getcwd() + f"/dataset/{data}/train.json").exists():
+        print("Data already exists")
+        train_review = json.load(open(Path(os.getcwd() + f"/dataset/{data}/train.json"), "r", encoding="utf-8"))
+        val_review = json.load(open(Path(os.getcwd() + f"/dataset/{data}/val.json"), "r", encoding="utf-8"))
+        test_review = json.load(open(Path(os.getcwd() + f"/dataset/{data}/test.json"), "r", encoding="utf-8"))
+        return train_review, val_review, test_review
+    else:
+        print("Request data to Junyoung")
+        raise NotImplementedError

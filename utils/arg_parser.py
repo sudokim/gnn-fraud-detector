@@ -42,9 +42,12 @@ def parse_args():
 def parse_bert_args():
     parser = ArgumentParser()
 
+    data = parser.add_argument_group("Data")
+    data.add_argument("--dataset", type=str, default="steam", help="Dataset to use", choices=["steam", "amazon"])
     module = parser.add_argument_group("Module")
     module.add_argument("--model_name", type=str, default="bert-base-cased", help="Type of the model to use")
     module.add_argument("--module_weight_decay", type=float, default=0.01, help="Weight decay of the module")
+    module.add_argument("--pos_weight", type=float, default=20, help="Positive class weight of the module")
     module.add_argument("--module_lr", type=float, default=5e-4, help="Learning rate of the module")
 
     trainer = parser.add_argument_group("Trainer")
