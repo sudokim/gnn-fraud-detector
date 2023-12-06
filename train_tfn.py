@@ -1,14 +1,12 @@
-import pickle
 import warnings
 from argparse import ArgumentParser, Namespace
 
-import numpy as np
 import pytorch_lightning as pl
 import pytorch_lightning.callbacks as callbacks
 import torch
+import torch_geometric.nn as gnn
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
-import torch_geometric.nn as gnn
 
 from data import load_data
 from tfn import LitTFN
@@ -19,11 +17,32 @@ def parse_args() -> Namespace:
     parser = ArgumentParser()
 
     trainer = parser.add_argument_group("Trainer")
-    trainer.add_argument("--max_epochs", type=int, default=1000)
-    trainer.add_argument("--seed", type=int, default=0)
-    trainer.add_argument("--run_name", type=str, default=None)
+    trainer.add_argument("--max_epochs", type=int, default=1000, help="Maximum number of epochs to train for")
+    trainer.add_argument("--seed", type=int, default=0, help="Random seed to use for training")
+    trainer.add_argument("--run_name", type=str, default=None, help="Name of the run for logging purposes")
 
-    return parser.parse_args()
+    module = parser.add_argument_group("Module")
+    module.add_argument("--num_gnns", type=int, default=3, help="Number of GNNs to use")
+    module.add_argument("--tfn_latent_dim", type=int, default=16, help="Latent dimension of the model")
+    module.add_argument("--gnn_latent_dim", type=int, default=32, help="Latent dimension of the GNN")
+    module.add_argument("--gnn_cls", type=str, default="GCNConv", help="GNN class to use to construct the GNN")
+    module.add_argument("--lr", type=float, default=0.01, help="Learning rate")
+    module.add_argument("--weight_decay", type=float, default=5e-4, help="L2 normalization")
+    module.add_argument("--dropout", type=float, default=0.1, help="Dropout within the model")
+    module.add_argument("--pos_weight", type=int, default=1, help="Loss weight for the positive class")
+
+    data = parser.add_argument_group("Data")
+    data.add_argument("--edge_index_paths", type=str, nargs="+", help="Paths to edge index files")
+    data.add_argument("--features_path", type=str, help="Path to features file")
+    data.add_argument("--labels_path", type=str, help="Path to labels file")
+    data.add_argument("--split_file", type=str, help="Path to split file")
+    data.add_argument("--bert_embedding_path", type=str, help="Path to BERT embeddings file")
+
+    args = parser.parse_args()
+
+    args.gnn_cls = getattr(gnn, args.gnn_cls)
+
+    return args
 
 
 def main(args: Namespace):
@@ -32,38 +51,35 @@ def main(args: Namespace):
     torch.set_float32_matmul_precision("medium")
 
     print("Loading data...")
-    bert_embedding = torch.load("dataset/node_embeddings/bert.pt", map_location="cpu")
-    data_upu = load_data(
-        edge_index_path="dataset/amazon_instruments_user_product_user.npz",
-        features_path="dataset/amazon_instruments_features.npy",
-        labels_path="dataset/amazon_instruments_labels.pkl",
-        split_file="dataset/amazon_instruments_split_masks.pkl",
-    )
-    data_usu = load_data(
-        edge_index_path="dataset/amazon_instruments_user_star_time_user.npz",
-        features_path="dataset/amazon_instruments_features.npy",
-        labels_path="dataset/amazon_instruments_labels.pkl",
-        split_file="dataset/amazon_instruments_split_masks.pkl",
-    )
-    data_uvu = load_data(
-        edge_index_path="dataset/amazon_instruments_user_tfidf_user.npz",
-        features_path="dataset/amazon_instruments_features.npy",
-        labels_path="dataset/amazon_instruments_labels.pkl",
-        split_file="dataset/amazon_instruments_split_masks.pkl",
+    bert_embedding = torch.load(args.bert_embedding_path, map_location="cpu")
+    data = tuple(
+        load_data(
+            edge_index_path=edge_index_path,
+            features_path=args.features_path,
+            labels_path=args.labels_path,
+            split_file=args.split_file,
+        )
+        for edge_index_path in args.edge_index_paths
     )
 
-    dataloader = DataLoader([(data_upu, data_usu, data_uvu)], shuffle=False, collate_fn=lambda x: x[0])
+    dataloader = DataLoader([data], shuffle=False, collate_fn=lambda x: x[0])
 
     # Initialize and set up the model, optimizer, and data loader
     pl.seed_everything(args.seed)
     # TODO: Replace hardcoded hyperparameters with argparse
     module = LitTFN(
-        num_gnns=3,
-        tfn_latent_dim=16,
-        gnn_input_dim=data_upu.num_features,
-        gnn_latent_dim=32,
+        num_gnns=len(data),
+        tfn_latent_dim=args.tfn_latent_dim,
+        gnn_input_dim=data[0].num_features,
+        gnn_latent_dim=args.gnn_latent_dim,
         bert_embedding=bert_embedding,
+        gnn_cls=args.gnn_cls,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        dropout=args.dropout,
+        pos_weight=args.pos_weight,
     )
+    module.compile(dynamic=False, mode="reduce-overhead")
 
     if args.run_name is None:
         run_name = "TFN"
